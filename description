@@ -1,0 +1,5 @@
+Can you write a python program, using type annotations, mypy for checking, and ruff with
+black format for code formatting, that takes an apache log format string and one or more
+log files, and processes them into clickhouse-local, then starts up a web server that
+serves a web application that allows visualizing the web requests, specifically to try to
+track down unusual requests like abuse?
