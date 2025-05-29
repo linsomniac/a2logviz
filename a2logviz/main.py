@@ -147,8 +147,13 @@ def main(
     default="combined",
     help="Apache log format: predefined name, Apache LogFormat string, or custom regex",
 )
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable debug output for parsing",
+)
 @click.argument("log_file")
-def test_parser(log_format: str, log_file: str) -> None:
+def test_parser(log_format: str, debug: bool, log_file: str) -> None:
     """Test log parsing on a single file without starting the server."""
     path = Path(log_file)
     if not path.exists():
@@ -158,6 +163,7 @@ def test_parser(log_format: str, log_file: str) -> None:
     parser = ApacheLogParser(log_format)
 
     click.echo(f"Testing parser with format: {log_format}")
+    click.echo(f"Parser uses apachelogs: {parser.use_apachelogs}")
     click.echo(f"Parsing first 10 lines of: {log_file}")
 
     with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -165,9 +171,36 @@ def test_parser(log_format: str, log_file: str) -> None:
             if i >= 10:
                 break
 
+            if debug:
+                click.echo(f"\nDEBUG: Processing line {i+1}")
+                click.echo(f"DEBUG: Raw line: {line.strip()}")
+
+                if parser.use_apachelogs and parser.apache_parser:
+                    try:
+                        entry_raw = parser.apache_parser.parse(line.strip())
+                        click.echo(f"DEBUG: apachelogs parsed successfully")
+                        click.echo(
+                            f"DEBUG: Available attributes: {[attr for attr in dir(entry_raw) if not attr.startswith('_')]}"
+                        )
+                        click.echo(
+                            f"DEBUG: remote_host: {getattr(entry_raw, 'remote_host', 'N/A')}"
+                        )
+                        click.echo(
+                            f"DEBUG: request_time: {getattr(entry_raw, 'request_time', 'N/A')}"
+                        )
+                        click.echo(
+                            f"DEBUG: final_status: {getattr(entry_raw, 'final_status', 'N/A')}"
+                        )
+                        if hasattr(entry_raw, "headers_in"):
+                            click.echo(f"DEBUG: headers_in: {entry_raw.headers_in}")
+                    except Exception as e:
+                        click.echo(f"DEBUG: apachelogs parsing failed: {e}")
+
             entry = parser.parse_line(line)
             if entry:
                 click.echo(f"✓ Line {i+1}: {entry.remote_host} - {entry.request_line}")
+                if debug:
+                    click.echo(f"DEBUG: Parsed entry: {entry}")
             else:
                 click.echo(f"✗ Line {i+1}: Failed to parse")
                 click.echo(f"    Raw line: {line.strip()}")

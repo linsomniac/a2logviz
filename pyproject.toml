@@ -17,7 +17,7 @@ dependencies = [
     "clickhouse-driver>=0.2.6",
     "python-multipart>=0.0.6",
     "aiofiles>=23.0.0",
-    "apachelogs>=0.7.0",
+    "apachelogs>=0.6.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +31,7 @@ dev = [
 
 [project.scripts]
 a2logviz = "a2logviz.main:main"
+a2logviz-test = "a2logviz.main:test_parser"
 
 [tool.black]
 line-length = 88

@@ -158,34 +158,88 @@ class ApacheLogParser:
 
             # Extract request time if available (microseconds to seconds)
             request_time = None
-            if hasattr(entry, "request_time_us") and entry.request_time_us is not None:
-                request_time = entry.request_time_us / 1_000_000.0
-            elif hasattr(entry, "request_time") and entry.request_time is not None:
-                request_time = float(entry.request_time)
+            # %D logs time in microseconds
+            if (
+                hasattr(entry, "request_duration_microseconds")
+                and entry.request_duration_microseconds is not None
+            ):
+                try:
+                    request_time = (
+                        float(entry.request_duration_microseconds) / 1_000_000.0
+                    )
+                except (ValueError, TypeError):
+                    request_time = None
+            elif (
+                hasattr(entry, "request_duration_us")
+                and entry.request_duration_us is not None
+            ):
+                try:
+                    request_time = float(entry.request_duration_us) / 1_000_000.0
+                except (ValueError, TypeError):
+                    request_time = None
+            elif (
+                hasattr(entry, "request_time_us") and entry.request_time_us is not None
+            ):
+                try:
+                    request_time = float(entry.request_time_us) / 1_000_000.0
+                except (ValueError, TypeError):
+                    request_time = None
+
+            # Handle different ways bytes_sent might be represented
+            response_size = None
+            if hasattr(entry, "bytes_sent") and entry.bytes_sent is not None:
+                if entry.bytes_sent != "-":
+                    try:
+                        response_size = int(entry.bytes_sent)
+                    except (ValueError, TypeError):
+                        response_size = None
+
+            # Handle referer header
+            referer = None
+            if hasattr(entry, "headers_in") and entry.headers_in:
+                referer = entry.headers_in.get("Referer")
+                if referer == "-":
+                    referer = None
+
+            # Handle user agent header
+            user_agent = None
+            if hasattr(entry, "headers_in") and entry.headers_in:
+                user_agent = entry.headers_in.get("User-Agent")
+                if user_agent == "-":
+                    user_agent = None
+
+            # Handle timestamp - use request_time or fallback to request_time_fields
+            timestamp = None
+            if hasattr(entry, "request_time") and entry.request_time is not None:
+                timestamp = entry.request_time
+            elif hasattr(entry, "request_time_fields") and entry.request_time_fields:
+                timestamp = entry.request_time_fields.timestamp
+
+            # Use the most appropriate field for remote_host (client IP for analysis)
+            # Priority: remote_address (%a) > remote_host (%h) > server_name (%V)
+            client_ip = ""
+            if hasattr(entry, "remote_address") and entry.remote_address:
+                client_ip = entry.remote_address
+            elif hasattr(entry, "remote_host") and entry.remote_host:
+                client_ip = entry.remote_host
+            elif hasattr(entry, "server_name") and entry.server_name:
+                client_ip = entry.server_name
 
             return LogEntry(
-                remote_host=entry.remote_host or "",
+                remote_host=client_ip,
                 remote_logname=(
                     entry.remote_logname if entry.remote_logname != "-" else None
                 ),
                 remote_user=entry.remote_user if entry.remote_user != "-" else None,
-                timestamp=entry.request_time_fields.timestamp,
+                timestamp=timestamp,
                 request_line=entry.request_line or "",
                 status_code=entry.final_status or 0,
-                response_size=entry.bytes_sent if entry.bytes_sent != "-" else None,
-                referer=(
-                    entry.headers_in.get("Referer")
-                    if hasattr(entry, "headers_in") and entry.headers_in
-                    else None
-                ),
-                user_agent=(
-                    entry.headers_in.get("User-Agent")
-                    if hasattr(entry, "headers_in") and entry.headers_in
-                    else None
-                ),
+                response_size=response_size,
+                referer=referer,
+                user_agent=user_agent,
                 request_time=request_time,
             )
-        except Exception:
+        except Exception as e:
             # Fallback for parsing errors
             return None
 

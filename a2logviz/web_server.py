@@ -287,6 +287,11 @@ class LogVisualizationServer:
             """Get user agent analysis."""
             return self.clickhouse.get_user_agent_analysis()
 
+        @self.app.get("/api/test")
+        async def test_clickhouse() -> dict[str, Any]:
+            """Test ClickHouse functionality."""
+            return self.clickhouse.test_query()
+
     def get_app(self) -> FastAPI:
         """Get the FastAPI application instance."""
         return self.app

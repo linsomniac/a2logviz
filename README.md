@@ -18,12 +18,14 @@ A Python tool that parses Apache log files, processes them with ClickHouse Local
 ## Installation
 
 1. Install dependencies:
+
 ```bash
 pip install -e ".[dev]"
 ```
 
 2. Install ClickHouse Local:
-Follow the installation instructions at https://clickhouse.com/docs/en/getting-started/install
+
+   curl https://clickhouse.com/ | sh
 
 ## Usage
 
@@ -98,6 +100,7 @@ a2logviz --log-format '%v:%p %h %l %u %t "%r" %>s %O "%{Referer}i" "%{User-Agent
 ```
 
 Commonly used LogFormat directives:
+
 - `%h`: Remote hostname/IP
 - `%l`: Remote logname
 - `%u`: Remote user
@@ -120,36 +123,46 @@ a2logviz --log-format "(?P<remote_host>\S+) (?P<remote_logname>\S+) (?P<remote_u
 ```
 
 Required named groups for regex:
+
 - `remote_host`: Client IP address
 - `timestamp`: Request timestamp
 - `request_line`: HTTP request line
 - `status_code`: HTTP response code
 
 Optional groups:
+
 - `remote_logname`, `remote_user`, `response_size`, `referer`, `user_agent`, `request_time`
 
 ## Abuse Detection
 
 ### Brute Force Detection
+
 Identifies IPs with high error rates in concentrated time periods:
+
 - Minimum failed attempts threshold
 - Error rate percentage
 - Time window analysis
 
 ### DDoS Pattern Detection
+
 Finds IPs generating high request volumes with low path diversity:
+
 - Request volume thresholds
 - Path diversity analysis
 - Success rate monitoring
 
 ### Vulnerability Scanning
+
 Detects directory and file scanning behavior:
+
 - High 404 error rates
 - Diverse path exploration patterns
 - Bot-like request patterns
 
 ### Bot Behavior Analysis
+
 Identifies automated traffic based on:
+
 - User agent string analysis
 - Request pattern anomalies
 - IP/User-Agent correlation
