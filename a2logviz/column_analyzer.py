@@ -100,11 +100,22 @@ class ColumnAnalyzer:
         # Escape column name for SQL safety
         escaped_column = f'`{column}`' if not column.startswith('`') else column
         
+        # Determine the column type from schema to handle null checks properly
+        column_type = self._get_column_type_from_schema(column)
+        
+        # Build appropriate null condition based on column type
+        if column_type in ['Int64', 'Float64', 'UInt64']:
+            # For numeric types, only check for NULL (empty strings are handled during CSV parsing)
+            null_condition = f"{escaped_column} IS NULL"
+        else:
+            # For string types, check both NULL and empty string
+            null_condition = f"({escaped_column} IS NULL OR {escaped_column} = '')"
+        
         # Basic statistics query
         basic_stats_query = f"""
         SELECT
             count() as total_count,
-            countIf({escaped_column} IS NULL OR {escaped_column} = '') as null_count,
+            countIf({null_condition}) as null_count,
             uniq({escaped_column}) as cardinality,
             any({escaped_column}) as sample_value
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
@@ -120,16 +131,21 @@ class ColumnAnalyzer:
         cardinality = int(stats["cardinality"])
         sample_value = stats["sample_value"]
 
-        # Get sample values
+        # Get sample values using appropriate null condition
+        if column_type in ['Int64', 'Float64', 'UInt64']:
+            where_condition = f"{escaped_column} IS NOT NULL"
+        else:
+            where_condition = f"{escaped_column} IS NOT NULL AND {escaped_column} != ''"
+            
         sample_query = f"""
         SELECT DISTINCT {escaped_column}
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
+        WHERE {where_condition}
         LIMIT 10
         """
 
         sample_result = self.clickhouse.execute_query(sample_query)
-        sample_values = [str(row[column]) for row in sample_result if row[column]]
+        sample_values = [str(row[column]) for row in sample_result if row[column] is not None]
 
         # Get most common values
         top_values_query = f"""
@@ -138,7 +154,7 @@ class ColumnAnalyzer:
             count() as frequency,
             count() * 100.0 / {total_count} as percentage
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
+        WHERE {where_condition}
         GROUP BY {escaped_column}
         ORDER BY frequency DESC
         LIMIT 10
@@ -156,7 +172,7 @@ class ColumnAnalyzer:
 
         # Determine analysis type and additional stats
         analysis_type, min_val, max_val, avg_length = self._determine_column_type(
-            column, escaped_column, sample_values, cardinality, total_count
+            column, escaped_column, column_type, sample_values, cardinality, total_count
         )
 
         # Calculate anomaly score
@@ -180,12 +196,18 @@ class ColumnAnalyzer:
         )
 
     def _determine_column_type(
-        self, column: str, escaped_column: str, sample_values: List[str], cardinality: int, total_count: int
+        self, column: str, escaped_column: str, column_type: str, sample_values: List[str], cardinality: int, total_count: int
     ) -> tuple[str, Optional[str], Optional[str], Optional[float]]:
         """Determine the analysis type and additional statistics for a column."""
         min_val = None
         max_val = None
         avg_length = None
+
+        # Determine appropriate where condition
+        if column_type in ['Int64', 'Float64', 'UInt64']:
+            where_condition = f"{escaped_column} IS NOT NULL"
+        else:
+            where_condition = f"{escaped_column} IS NOT NULL AND {escaped_column} != ''"
 
         # Check if it's a timestamp column
         if "timestamp" in column.lower() or "time" in column.lower():
@@ -195,7 +217,7 @@ class ColumnAnalyzer:
                     min({escaped_column}) as min_val,
                     max({escaped_column}) as max_val
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {escaped_column} IS NOT NULL
+                WHERE {where_condition}
                 """
                 result = self.clickhouse.execute_query(minmax_query)
                 if result:
@@ -222,7 +244,7 @@ class ColumnAnalyzer:
                     max(CAST({escaped_column} AS Float64)) as max_val,
                     avg(length(toString({escaped_column}))) as avg_length
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
+                WHERE {where_condition}
                 """
                 result = self.clickhouse.execute_query(minmax_query)
                 if result:
@@ -239,7 +261,7 @@ class ColumnAnalyzer:
                 length_query = f"""
                 SELECT avg(length({escaped_column})) as avg_length
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
+                WHERE {where_condition}
                 """
                 result = self.clickhouse.execute_query(length_query)
                 if result:
@@ -314,6 +336,25 @@ class ColumnAnalyzer:
                 score += 0.2  # Very uniform with high cardinality
 
         return min(score, 1.0)
+
+    def _get_column_type_from_schema(self, column: str) -> str:
+        """Extract the column type from the ClickHouse CSV schema."""
+        try:
+            schema = self.clickhouse.csv_schema
+            # Parse schema like: 'col1 Type1, col2 Type2, ...'
+            for part in schema.split(','):
+                part = part.strip()
+                if ' ' in part:
+                    col_name, col_type = part.split(' ', 1)
+                    col_name = col_name.strip('`')  # Remove backticks if present
+                    if col_name == column:
+                        # Extract base type (remove Nullable wrapper)
+                        if col_type.startswith('Nullable(') and col_type.endswith(')'):
+                            return col_type[9:-1]  # Remove 'Nullable(' and ')'
+                        return col_type
+            return "String"  # Default fallback
+        except:
+            return "String"  # Safe fallback
 
     def get_time_range(self) -> Dict[str, str]:
         """Get the time range of the dataset."""

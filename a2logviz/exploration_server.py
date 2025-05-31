@@ -958,14 +958,21 @@ class ExplorationServer:
                 # Escape column name for SQL safety
                 escaped_column = f'`{column_name}`' if not column_name.startswith('`') else column_name
                 
+                # Determine column type to use appropriate null condition
+                column_type = self._get_column_type_from_schema(column_name)
+                if column_type in ['Int64', 'Float64', 'UInt64']:
+                    where_condition = f"{escaped_column} IS NOT NULL"
+                else:
+                    where_condition = f"{escaped_column} IS NOT NULL AND {escaped_column} != ''"
+                
                 # Get distribution
                 query = f"""
                 SELECT
                     {escaped_column} as value,
                     count() as frequency,
-                    count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE {escaped_column} IS NOT NULL {time_condition}) as percentage
+                    count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE {where_condition} {time_condition}) as percentage
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != '' {time_condition}
+                WHERE {where_condition} {time_condition}
                 GROUP BY {escaped_column}
                 ORDER BY frequency DESC
                 LIMIT {limit}
@@ -980,6 +987,25 @@ class ExplorationServer:
 
             except Exception as e:
                 return {"error": str(e)}
+
+    def _get_column_type_from_schema(self, column: str) -> str:
+        """Extract the column type from the ClickHouse CSV schema."""
+        try:
+            schema = self.clickhouse.csv_schema
+            # Parse schema like: 'col1 Type1, col2 Type2, ...'
+            for part in schema.split(','):
+                part = part.strip()
+                if ' ' in part:
+                    col_name, col_type = part.split(' ', 1)
+                    col_name = col_name.strip('`')  # Remove backticks if present
+                    if col_name == column:
+                        # Extract base type (remove Nullable wrapper)
+                        if col_type.startswith('Nullable(') and col_type.endswith(')'):
+                            return col_type[9:-1]  # Remove 'Nullable(' and ')'
+                        return col_type
+            return "String"  # Default fallback
+        except:
+            return "String"  # Safe fallback
 
     def get_app(self) -> FastAPI:
         """Get the FastAPI application instance."""
