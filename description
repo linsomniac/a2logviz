@@ -3,3 +3,23 @@ black format for code formatting, that takes an apache log format string and one
 log files, and processes them into clickhouse-local, then starts up a web server that
 serves a web application that allows visualizing the web requests, specifically to try to
 track down unusual requests like abuse?
+
+====
+
+This is a good start, but lets try another approach.  Can you make a main page on the
+app that shows each the of columns that were found in the log and some basic statistics
+about them like maybe some cardinality information, column type, data from a sample
+row and maybe a couple other things that would be interesting from a high level,
+and then allow the user to pick a few of the columns and allow them to drill down
+to get more information on those columns, kind of like a SQL "group by" if multiple
+columns are selected.  Then show more details about the selected columns that might
+relate to attack profiles and surfacing important data that a sys admin might need to
+determine anomalies like high frequency of occurrence, histograms of elements, some
+useful groupings and highest frequency of occurrence, anything that a best in class
+anomaly surfacing and visualization tool might need to show an analyst to identify and
+resolve problems.  Certain columns like request time it might be good to show maximums,
+or a graph, others like IP address it wouldn't be useful to show maximums but might
+be good to show a histogram or heat map.  Maybe even pick a few visualizations and
+then allow the user to select others in case they  make sense, or further drill down
+into the data.  Also an ability to select a time window of the log data could be very
+useful in all panels to allow narrowing down on an event.

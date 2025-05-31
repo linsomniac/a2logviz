@@ -7,7 +7,9 @@ import click
 import uvicorn
 
 from .abuse_detector import AbuseDetector
+from .anomaly_detector import AdvancedAnomalyDetector
 from .clickhouse_client import ClickHouseLocalClient
+from .exploration_server import ExplorationServer
 from .log_parser import ApacheLogParser
 from .web_server import LogVisualizationServer
 
@@ -21,6 +23,12 @@ from .web_server import LogVisualizationServer
 @click.option("--host", default="127.0.0.1", help="Host to bind the web server to")
 @click.option("--port", default=8000, type=int, help="Port to bind the web server to")
 @click.option(
+    "--mode",
+    default="explorer",
+    type=click.Choice(["explorer", "dashboard"]),
+    help="Interface mode: explorer (advanced analysis) or dashboard (simple charts)",
+)
+@click.option(
     "--min-suspicious-requests",
     default=100,
     type=int,
@@ -31,6 +39,7 @@ def main(
     log_format: str,
     host: str,
     port: int,
+    mode: str,
     min_suspicious_requests: int,
     log_files: tuple[str, ...],
 ) -> None:
@@ -85,45 +94,99 @@ def main(
             if patterns:
                 click.echo(f"  - {pattern_type}: {len(patterns)} patterns")
 
-        # Start web server
-        click.echo(f"Starting web server on http://{host}:{port}")
-        server = LogVisualizationServer(clickhouse_client)
-        app = server.get_app()
+        # Start web server based on mode
+        click.echo(f"Starting web server in {mode} mode on http://{host}:{port}")
 
-        # Add abuse detection endpoint
-        @app.get("/api/abuse-patterns")
-        async def get_abuse_patterns() -> dict:
-            """Get detected abuse patterns."""
-            return {
-                "patterns": abuse_patterns,
-                "summary": {
-                    pattern_type: len(patterns)
-                    for pattern_type, patterns in abuse_patterns.items()
-                },
-            }
+        if mode == "explorer":
+            # Use advanced exploration server
+            server = ExplorationServer(clickhouse_client)
+            app = server.get_app()
 
-        @app.get("/api/top-threats")
-        async def get_top_threats() -> list:
-            """Get top security threats."""
-            threats = abuse_detector.get_top_threats(limit=10)
-            return [
-                {
-                    "pattern_type": threat.pattern_type,
-                    "severity": threat.severity,
-                    "description": threat.description,
-                    "affected_ips": threat.affected_ips,
-                    "request_count": threat.request_count,
-                    "confidence": threat.confidence,
-                    "details": threat.details,
+            # Add enhanced anomaly detection
+            anomaly_detector = AdvancedAnomalyDetector(clickhouse_client)
+
+            @app.get("/api/anomalies")
+            async def get_anomalies(
+                start_time: str = None, end_time: str = None
+            ) -> dict:
+                """Get advanced anomaly detection results."""
+                time_filter = None
+                if start_time and end_time:
+                    time_filter = {"start": start_time, "end": end_time}
+                return {
+                    "alerts": [
+                        {
+                            "alert_type": alert.alert_type,
+                            "severity": alert.severity,
+                            "column": alert.column,
+                            "description": alert.description,
+                            "value": alert.value,
+                            "frequency": alert.frequency,
+                            "percentage": alert.percentage,
+                            "recommendations": alert.recommendations or [],
+                        }
+                        for alert in anomaly_detector.detect_all_anomalies(time_filter)
+                    ]
                 }
-                for threat in threats
-            ]
 
-        click.echo("Dashboard available at the following endpoints:")
-        click.echo(f"  - Main dashboard: http://{host}:{port}/")
-        click.echo(f"  - Top IPs API: http://{host}:{port}/api/top-ips")
-        click.echo(f"  - Abuse patterns: http://{host}:{port}/api/abuse-patterns")
-        click.echo(f"  - Top threats: http://{host}:{port}/api/top-threats")
+            @app.get("/api/security-summary")
+            async def get_security_summary(
+                start_time: str = None, end_time: str = None
+            ) -> dict:
+                """Get security summary."""
+                time_filter = None
+                if start_time and end_time:
+                    time_filter = {"start": start_time, "end": end_time}
+                return anomaly_detector.get_security_summary(time_filter)
+
+            click.echo("Advanced Explorer available at:")
+            click.echo(f"  - Main explorer: http://{host}:{port}/")
+            click.echo(f"  - Column analysis: http://{host}:{port}/api/columns")
+            click.echo(f"  - Anomaly detection: http://{host}:{port}/api/anomalies")
+            click.echo(
+                f"  - Security summary: http://{host}:{port}/api/security-summary"
+            )
+
+        else:
+            # Use traditional dashboard
+            server = LogVisualizationServer(clickhouse_client)
+            app = server.get_app()
+
+            # Add abuse detection endpoint
+            @app.get("/api/abuse-patterns")
+            async def get_abuse_patterns() -> dict:
+                """Get detected abuse patterns."""
+                return {
+                    "patterns": abuse_patterns,
+                    "summary": {
+                        pattern_type: len(patterns)
+                        for pattern_type, patterns in abuse_patterns.items()
+                    },
+                }
+
+            @app.get("/api/top-threats")
+            async def get_top_threats() -> list:
+                """Get top security threats."""
+                threats = abuse_detector.get_top_threats(limit=10)
+                return [
+                    {
+                        "pattern_type": threat.pattern_type,
+                        "severity": threat.severity,
+                        "description": threat.description,
+                        "affected_ips": threat.affected_ips,
+                        "request_count": threat.request_count,
+                        "confidence": threat.confidence,
+                        "details": threat.details,
+                    }
+                    for threat in threats
+                ]
+
+            click.echo("Dashboard available at the following endpoints:")
+            click.echo(f"  - Main dashboard: http://{host}:{port}/")
+            click.echo(f"  - Top IPs API: http://{host}:{port}/api/top-ips")
+            click.echo(f"  - Abuse patterns: http://{host}:{port}/api/abuse-patterns")
+            click.echo(f"  - Top threats: http://{host}:{port}/api/top-threats")
+
         click.echo("Press Ctrl+C to stop the server")
 
         uvicorn.run(app, host=host, port=port, log_level="info")
