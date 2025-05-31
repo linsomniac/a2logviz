@@ -406,16 +406,26 @@ class ColumnAnalyzer:
                 escaped_timestamp_col = f'`{timestamp_col}`' if not timestamp_col.startswith('`') else timestamp_col
                 time_condition = f"AND {escaped_timestamp_col} BETWEEN '{time_filter['start']}' AND '{time_filter['end']}'"
 
-        # Get group statistics with escaped column names
+        # Get group statistics with escaped column names and type-aware conditions
         escaped_columns = [f'`{col}`' if not col.startswith('`') else col for col in columns]
         column_list = ", ".join(escaped_columns)
+        
+        # Build type-aware WHERE conditions for each column
+        where_conditions = []
+        for col, escaped_col in zip(columns, escaped_columns):
+            column_type = self._get_column_type_from_schema(col)
+            if column_type in ['Int64', 'Float64', 'UInt64']:
+                where_conditions.append(f"{escaped_col} IS NOT NULL")
+            else:
+                where_conditions.append(f"({escaped_col} IS NOT NULL AND {escaped_col} != '')")
+        
         group_query = f"""
         SELECT
             {column_list},
             count() as frequency,
             count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE 1=1 {time_condition}) as percentage
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {" AND ".join(f"{escaped_col} IS NOT NULL AND {escaped_col} != ''" for escaped_col in escaped_columns)} {time_condition}
+        WHERE {" AND ".join(where_conditions)} {time_condition}
         GROUP BY {column_list}
         ORDER BY frequency DESC
         LIMIT {limit}
