@@ -56,12 +56,12 @@ class LogVisualizationServer:
     <div class="container-fluid">
         <h1 class="mt-4 mb-4">Apache Log Analysis Dashboard</h1>
 
-        <div id="timeline-container" style="margin-bottom: 20px;">
+        <div id="timeline-container" style="margin-bottom: 20px; min-height: 150px;">
             <!-- Timeline will be rendered here -->
             <p>Timeline Placeholder</p>
         </div>
 
-        <div class="row mb-3">
+        <div class="row mb-3" style="display: none;">
             <div class="col-md-5">
                 <label for="start_time" class="form-label">Start Time:</label>
                 <input type="datetime-local" id="start_time" name="start_time" class="form-control">
