@@ -34,8 +34,19 @@ class ExplorationServer:
         # Analyze columns on initialization
         self.column_metadata = self.analyzer.analyze_all_columns()
         self.time_range = self.analyzer.get_time_range()
+        
+        # Store abuse patterns from the original analysis
+        self.abuse_patterns = {}
 
         self._setup_routes()
+
+    def set_abuse_patterns(self, patterns: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Set the detected abuse patterns for security analysis display.
+        
+        Args:
+            patterns: Dictionary mapping pattern types to lists of detected patterns
+        """
+        self.abuse_patterns = patterns
 
     def _create_templates(self) -> None:
         """Create HTML templates for the exploration interface."""
@@ -47,6 +58,7 @@ class ExplorationServer:
     <title>Apache Log Explorer</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <style>
         .column-card {
             border: 1px solid #dee2e6;
@@ -107,6 +119,30 @@ class ExplorationServer:
     <div class="container-fluid">
         <h1 class="mt-4 mb-4">Apache Log Data Explorer</h1>
         
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="explorer-tab" data-bs-toggle="tab" data-bs-target="#explorer" type="button" role="tab" aria-controls="explorer" aria-selected="true">
+                    Data Explorer
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab" aria-controls="security" aria-selected="false">
+                    Security Alerts <span id="alertBadge" class="badge bg-danger ms-1" style="display: none;">0</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="anomalies-tab" data-bs-toggle="tab" data-bs-target="#anomalies" type="button" role="tab" aria-controls="anomalies" aria-selected="false">
+                    Advanced Anomalies
+                </button>
+            </li>
+        </ul>
+        
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Data Explorer Tab -->
+            <div class="tab-pane fade show active" id="explorer" role="tabpanel" aria-labelledby="explorer-tab">
+        
         <!-- Time Range Filter -->
         <div class="filter-panel">
             <h4>Time Range Filter</h4>
@@ -163,6 +199,72 @@ class ExplorationServer:
                 <!-- Analysis results will be shown here -->
             </div>
         </div>
+        
+            </div>
+            <!-- End Data Explorer Tab -->
+            
+            <!-- Security Alerts Tab -->
+            <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
+                <div class="row">
+                    <div class="col-md-12">
+                        <h3>Security Alert Summary</h3>
+                        <div id="securitySummary" class="row mb-4">
+                            <!-- Summary cards will be populated here -->
+                        </div>
+                        
+                        <h4>Detected Abuse Patterns</h4>
+                        <div id="abusePatterns">
+                            <div class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p>Loading security analysis...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- End Security Alerts Tab -->
+            
+            <!-- Advanced Anomalies Tab -->
+            <div class="tab-pane fade" id="anomalies" role="tabpanel" aria-labelledby="anomalies-tab">
+                <div class="row">
+                    <div class="col-md-12">
+                        <h3>Advanced Anomaly Detection</h3>
+                        <p class="text-muted">Real-time anomaly detection with machine learning algorithms</p>
+                        
+                        <div class="filter-panel mb-4">
+                            <h5>Anomaly Time Filter</h5>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="anomalyStartTime" class="form-label">Start Time</label>
+                                    <input type="datetime-local" class="form-control" id="anomalyStartTime">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="anomalyEndTime" class="form-label">End Time</label>
+                                    <input type="datetime-local" class="form-control" id="anomalyEndTime">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <div>
+                                        <button class="btn btn-primary" onclick="loadAnomalies()">Detect Anomalies</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="anomalyResults">
+                            <div class="alert alert-info">
+                                <strong>Info:</strong> Click "Detect Anomalies" to run advanced anomaly detection on your log data.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- End Advanced Anomalies Tab -->
+            
+        </div>
+        <!-- End Tab Content -->
     </div>
 
     <script>
@@ -174,7 +276,18 @@ class ExplorationServer:
         window.onload = function() {
             loadColumnMetadata();
             loadTimeRange();
+            loadSecurityAlerts();
         };
+        
+        // Tab event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            const securityTab = document.getElementById('security-tab');
+            if (securityTab) {
+                securityTab.addEventListener('shown.bs.tab', function() {
+                    loadSecurityAlerts();
+                });
+            }
+        });
 
         async function loadColumnMetadata() {
             try {
@@ -212,6 +325,10 @@ class ExplorationServer:
             grid.innerHTML = '';
 
             Object.values(columnMetadata).forEach(column => {
+                // Only skip columns that are completely empty (no data at all)
+                if (column.total_count === 0 || (column.cardinality === 0 && column.null_count === column.total_count)) {
+                    return;
+                }
                 const card = createColumnCard(column);
                 grid.appendChild(card);
             });
@@ -461,6 +578,252 @@ class ExplorationServer:
             
             Plotly.newPlot('groupChart', [trace], layout);
         }
+        
+        async function loadSecurityAlerts() {
+            try {
+                const response = await fetch('/api/abuse-patterns');
+                const data = await response.json();
+                renderSecurityAlerts(data);
+            } catch (error) {
+                console.error('Error loading security alerts:', error);
+                document.getElementById('abusePatterns').innerHTML = 
+                    '<div class="alert alert-danger">Error loading security alerts</div>';
+            }
+        }
+        
+        function renderSecurityAlerts(data) {
+            const summaryDiv = document.getElementById('securitySummary');
+            const patternsDiv = document.getElementById('abusePatterns');
+            
+            if (!data.patterns) {
+                patternsDiv.innerHTML = '<div class="alert alert-info">No abuse patterns detected</div>';
+                return;
+            }
+            
+            // Render summary cards
+            const totalPatterns = Object.values(data.patterns).reduce((sum, patterns) => sum + patterns.length, 0);
+            document.getElementById('alertBadge').textContent = totalPatterns;
+            document.getElementById('alertBadge').style.display = totalPatterns > 0 ? 'inline' : 'none';
+            
+            summaryDiv.innerHTML = `
+                <div class="col-md-3">
+                    <div class="card border-danger">
+                        <div class="card-body text-center">
+                            <h5 class="card-title text-danger">Brute Force</h5>
+                            <h2 class="text-danger">${data.patterns.brute_force?.length || 0}</h2>
+                            <p class="card-text">Attack patterns</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-warning">
+                        <div class="card-body text-center">
+                            <h5 class="card-title text-warning">DDoS</h5>
+                            <h2 class="text-warning">${data.patterns.ddos?.length || 0}</h2>
+                            <p class="card-text">Traffic patterns</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-info">
+                        <div class="card-body text-center">
+                            <h5 class="card-title text-info">Scanning</h5>
+                            <h2 class="text-info">${data.patterns.scanning?.length || 0}</h2>
+                            <p class="card-text">Probe attempts</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-secondary">
+                        <div class="card-body text-center">
+                            <h5 class="card-title text-secondary">Bot Behavior</h5>
+                            <h2 class="text-secondary">${data.patterns.bot_behavior?.length || 0}</h2>
+                            <p class="card-text">Automated traffic</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Render detailed patterns
+            let patternsHtml = '';
+            
+            Object.entries(data.patterns).forEach(([patternType, patterns]) => {
+                if (patterns && patterns.length > 0) {
+                    const typeColors = {
+                        'brute_force': 'danger',
+                        'ddos': 'warning', 
+                        'scanning': 'info',
+                        'bot_behavior': 'secondary'
+                    };
+                    
+                    const color = typeColors[patternType] || 'primary';
+                    
+                    patternsHtml += `
+                        <div class="card mb-3 border-${color}">
+                            <div class="card-header bg-${color} text-white">
+                                <h5 class="mb-0">${patternType.replace('_', ' ').toUpperCase()} (${patterns.length} patterns)</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Severity</th>
+                                                <th>Description</th>
+                                                <th>Affected IPs</th>
+                                                <th>Request Count</th>
+                                                <th>Confidence</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                    `;
+                    
+                    patterns.forEach(pattern => {
+                        const severityClass = {
+                            'critical': 'danger',
+                            'high': 'warning',
+                            'medium': 'info',
+                            'low': 'secondary'
+                        }[pattern.severity] || 'secondary';
+                        
+                        patternsHtml += `
+                            <tr>
+                                <td><span class="badge bg-${severityClass}">${pattern.severity}</span></td>
+                                <td>${pattern.description}</td>
+                                <td>${pattern.affected_ips.join(', ')}</td>
+                                <td>${pattern.request_count.toLocaleString()}</td>
+                                <td>${(pattern.confidence * 100).toFixed(1)}%</td>
+                            </tr>
+                        `;
+                    });
+                    
+                    patternsHtml += `
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+            
+            if (patternsHtml) {
+                patternsDiv.innerHTML = patternsHtml;
+            } else {
+                patternsDiv.innerHTML = '<div class="alert alert-success">No security threats detected in your log data!</div>';
+            }
+        }
+        
+        async function loadAnomalies() {
+            const startTime = document.getElementById('anomalyStartTime').value;
+            const endTime = document.getElementById('anomalyEndTime').value;
+            const resultsDiv = document.getElementById('anomalyResults');
+            
+            resultsDiv.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div><p>Detecting anomalies...</p></div>';
+            
+            try {
+                let url = '/api/anomalies';
+                const params = new URLSearchParams();
+                if (startTime) params.append('start_time', startTime.replace('T', ' ') + ':00');
+                if (endTime) params.append('end_time', endTime.replace('T', ' ') + ':00');
+                
+                if (params.toString()) {
+                    url += '?' + params.toString();
+                }
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                renderAnomalies(data.alerts);
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            }
+        }
+        
+        function renderAnomalies(alerts) {
+            const resultsDiv = document.getElementById('anomalyResults');
+            
+            if (!alerts || alerts.length === 0) {
+                resultsDiv.innerHTML = '<div class="alert alert-success">No anomalies detected in the specified time range.</div>';
+                return;
+            }
+            
+            // Group by severity
+            const alertsBySeverity = {
+                'critical': alerts.filter(a => a.severity === 'critical'),
+                'high': alerts.filter(a => a.severity === 'high'),
+                'medium': alerts.filter(a => a.severity === 'medium'),
+                'low': alerts.filter(a => a.severity === 'low')
+            };
+            
+            let html = `<div class="row mb-3">`;
+            Object.entries(alertsBySeverity).forEach(([severity, severityAlerts]) => {
+                const color = {
+                    'critical': 'danger',
+                    'high': 'warning',
+                    'medium': 'info',
+                    'low': 'secondary'
+                }[severity];
+                
+                html += `
+                    <div class="col-md-3">
+                        <div class="card border-${color}">
+                            <div class="card-body text-center">
+                                <h5 class="card-title text-${color}">${severity.toUpperCase()}</h5>
+                                <h2 class="text-${color}">${severityAlerts.length}</h2>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += `</div>`;
+            
+            // Show alerts
+            html += '<div class="accordion" id="anomalyAccordion">';
+            alerts.forEach((alert, index) => {
+                const severityClass = {
+                    'critical': 'danger',
+                    'high': 'warning',
+                    'medium': 'info',
+                    'low': 'secondary'
+                }[alert.severity] || 'secondary';
+                
+                html += `
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="heading${index}">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${index}">
+                                <span class="badge bg-${severityClass} me-2">${alert.severity}</span>
+                                <strong>${alert.column}</strong>: ${alert.description}
+                            </button>
+                        </h2>
+                        <div id="collapse${index}" class="accordion-collapse collapse" data-bs-parent="#anomalyAccordion">
+                            <div class="accordion-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <strong>Alert Type:</strong> ${alert.alert_type}<br>
+                                        <strong>Value:</strong> ${alert.value}<br>
+                                        <strong>Frequency:</strong> ${alert.frequency.toLocaleString()}<br>
+                                        <strong>Percentage:</strong> ${alert.percentage.toFixed(2)}%
+                                    </div>
+                                    <div class="col-md-6">
+                                        ${alert.recommendations && alert.recommendations.length > 0 ? `
+                                            <strong>Recommendations:</strong>
+                                            <ul class="mt-2">
+                                                ${alert.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                            </ul>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            resultsDiv.innerHTML = html;
+        }
     </script>
 </body>
 </html>
@@ -521,6 +884,32 @@ class ExplorationServer:
 
             return self.analyzer.analyze_column_group(column_list, time_filter, limit)
 
+        @self.app.get("/api/abuse-patterns")
+        async def get_abuse_patterns() -> Dict[str, Any]:
+            """Get detected abuse patterns for security analysis."""
+            return {"patterns": self.abuse_patterns}
+
+        @self.app.get("/api/anomalies")
+        async def get_anomalies(
+            start_time: Optional[str] = Query(None),
+            end_time: Optional[str] = Query(None),
+        ) -> Dict[str, Any]:
+            """Run anomaly detection on the dataset."""
+            from .anomaly_detector import AnomalyDetector
+            
+            try:
+                detector = AnomalyDetector(self.clickhouse)
+                
+                time_filter = None
+                if start_time and end_time:
+                    time_filter = {"start": start_time, "end": end_time}
+                
+                alerts = detector.detect_anomalies(time_filter)
+                return {"alerts": alerts}
+                
+            except Exception as e:
+                return {"error": str(e), "alerts": []}
+
         @self.app.get("/api/column/{column_name}/distribution")
         async def get_column_distribution(
             column_name: str,
@@ -545,18 +934,22 @@ class ExplorationServer:
                     None,
                 )
                 if timestamp_col:
-                    time_condition = f"AND {timestamp_col} BETWEEN '{time_filter['start']}' AND '{time_filter['end']}'"
+                    escaped_timestamp_col = f'`{timestamp_col}`' if not timestamp_col.startswith('`') else timestamp_col
+                    time_condition = f"AND {escaped_timestamp_col} BETWEEN '{time_filter['start']}' AND '{time_filter['end']}'"
 
             try:
+                # Escape column name for SQL safety
+                escaped_column = f'`{column_name}`' if not column_name.startswith('`') else column_name
+                
                 # Get distribution
                 query = f"""
                 SELECT
-                    {column_name} as value,
+                    {escaped_column} as value,
                     count() as frequency,
-                    count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE {column_name} IS NOT NULL {time_condition}) as percentage
+                    count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE {escaped_column} IS NOT NULL {time_condition}) as percentage
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {column_name} IS NOT NULL AND {column_name} != '' {time_condition}
-                GROUP BY {column_name}
+                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != '' {time_condition}
+                GROUP BY {escaped_column}
                 ORDER BY frequency DESC
                 LIMIT {limit}
                 """

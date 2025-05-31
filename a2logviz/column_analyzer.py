@@ -66,15 +66,27 @@ class ColumnAnalyzer:
                     print(f"Analyzed column: {column}")
                 except Exception as e:
                     print(f"Failed to analyze column {column}: {e}")
-                    # Create minimal metadata for failed columns
+                    # Create minimal metadata for failed columns but try to get basic info
+                    try:
+                        # Try a simpler query to get at least total count
+                        simple_query = f"""
+                        SELECT count() as total_count
+                        FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
+                        """
+                        simple_result = self.clickhouse.execute_query(simple_query)
+                        total_count = int(simple_result[0]["total_count"]) if simple_result else 1
+                    except:
+                        total_count = 1  # Set to 1 to ensure column appears in UI
+                    
                     self.column_metadata[column] = ColumnMetadata(
                         name=column,
                         data_type="unknown",
-                        cardinality=0,
+                        cardinality=1,  # Set to 1 instead of 0 to ensure column appears
                         null_count=0,
-                        total_count=0,
-                        sample_values=[],
+                        total_count=total_count,
+                        sample_values=["(analysis failed)"],
                         most_common=[],
+                        anomaly_score=0.1,  # Small score to indicate needs attention
                     )
 
             return self.column_metadata
@@ -85,13 +97,16 @@ class ColumnAnalyzer:
 
     def _analyze_single_column(self, column: str) -> ColumnMetadata:
         """Analyze a single column and return its metadata."""
+        # Escape column name for SQL safety
+        escaped_column = f'`{column}`' if not column.startswith('`') else column
+        
         # Basic statistics query
         basic_stats_query = f"""
         SELECT
             count() as total_count,
-            countIf({column} IS NULL OR {column} = '') as null_count,
-            uniq({column}) as cardinality,
-            any({column}) as sample_value
+            countIf({escaped_column} IS NULL OR {escaped_column} = '') as null_count,
+            uniq({escaped_column}) as cardinality,
+            any({escaped_column}) as sample_value
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
         """
 
@@ -107,9 +122,9 @@ class ColumnAnalyzer:
 
         # Get sample values
         sample_query = f"""
-        SELECT DISTINCT {column}
+        SELECT DISTINCT {escaped_column}
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {column} IS NOT NULL AND {column} != ''
+        WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
         LIMIT 10
         """
 
@@ -119,12 +134,12 @@ class ColumnAnalyzer:
         # Get most common values
         top_values_query = f"""
         SELECT
-            {column} as value,
+            {escaped_column} as value,
             count() as frequency,
             count() * 100.0 / {total_count} as percentage
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {column} IS NOT NULL AND {column} != ''
-        GROUP BY {column}
+        WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
+        GROUP BY {escaped_column}
         ORDER BY frequency DESC
         LIMIT 10
         """
@@ -141,7 +156,7 @@ class ColumnAnalyzer:
 
         # Determine analysis type and additional stats
         analysis_type, min_val, max_val, avg_length = self._determine_column_type(
-            column, sample_values, cardinality, total_count
+            column, escaped_column, sample_values, cardinality, total_count
         )
 
         # Calculate anomaly score
@@ -165,7 +180,7 @@ class ColumnAnalyzer:
         )
 
     def _determine_column_type(
-        self, column: str, sample_values: List[str], cardinality: int, total_count: int
+        self, column: str, escaped_column: str, sample_values: List[str], cardinality: int, total_count: int
     ) -> tuple[str, Optional[str], Optional[str], Optional[float]]:
         """Determine the analysis type and additional statistics for a column."""
         min_val = None
@@ -177,10 +192,10 @@ class ColumnAnalyzer:
             try:
                 minmax_query = f"""
                 SELECT
-                    min({column}) as min_val,
-                    max({column}) as max_val
+                    min({escaped_column}) as min_val,
+                    max({escaped_column}) as max_val
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {column} IS NOT NULL
+                WHERE {escaped_column} IS NOT NULL
                 """
                 result = self.clickhouse.execute_query(minmax_query)
                 if result:
@@ -203,11 +218,11 @@ class ColumnAnalyzer:
             try:
                 minmax_query = f"""
                 SELECT
-                    min(CAST({column} AS Float64)) as min_val,
-                    max(CAST({column} AS Float64)) as max_val,
-                    avg(length(toString({column}))) as avg_length
+                    min(CAST({escaped_column} AS Float64)) as min_val,
+                    max(CAST({escaped_column} AS Float64)) as max_val,
+                    avg(length(toString({escaped_column}))) as avg_length
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {column} IS NOT NULL AND {column} != ''
+                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
                 """
                 result = self.clickhouse.execute_query(minmax_query)
                 if result:
@@ -222,9 +237,9 @@ class ColumnAnalyzer:
         if cardinality > total_count * 0.1:
             try:
                 length_query = f"""
-                SELECT avg(length({column})) as avg_length
+                SELECT avg(length({escaped_column})) as avg_length
                 FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-                WHERE {column} IS NOT NULL AND {column} != ''
+                WHERE {escaped_column} IS NOT NULL AND {escaped_column} != ''
                 """
                 result = self.clickhouse.execute_query(length_query)
                 if result:
@@ -310,13 +325,14 @@ class ColumnAnalyzer:
             return {"earliest": "Unknown", "latest": "Unknown"}
 
         timestamp_col = timestamp_columns[0]
+        escaped_timestamp_col = f'`{timestamp_col}`' if not timestamp_col.startswith('`') else timestamp_col
         try:
             query = f"""
             SELECT
-                min({timestamp_col}) as earliest,
-                max({timestamp_col}) as latest
+                min({escaped_timestamp_col}) as earliest,
+                max({escaped_timestamp_col}) as latest
             FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-            WHERE {timestamp_col} IS NOT NULL
+            WHERE {escaped_timestamp_col} IS NOT NULL
             """
             result = self.clickhouse.execute_query(query)
             if result:
@@ -346,17 +362,19 @@ class ColumnAnalyzer:
                 (col for col in columns if "timestamp" in col.lower()), None
             )
             if timestamp_col:
-                time_condition = f"AND {timestamp_col} BETWEEN '{time_filter['start']}' AND '{time_filter['end']}'"
+                escaped_timestamp_col = f'`{timestamp_col}`' if not timestamp_col.startswith('`') else timestamp_col
+                time_condition = f"AND {escaped_timestamp_col} BETWEEN '{time_filter['start']}' AND '{time_filter['end']}'"
 
-        # Get group statistics
-        column_list = ", ".join(columns)
+        # Get group statistics with escaped column names
+        escaped_columns = [f'`{col}`' if not col.startswith('`') else col for col in columns]
+        column_list = ", ".join(escaped_columns)
         group_query = f"""
         SELECT
             {column_list},
             count() as frequency,
             count() * 100.0 / (SELECT count() FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}') WHERE 1=1 {time_condition}) as percentage
         FROM file('{self.clickhouse.data_file}', CSV, '{self.clickhouse.csv_schema}')
-        WHERE {" AND ".join(f"{col} IS NOT NULL AND {col} != ''" for col in columns)} {time_condition}
+        WHERE {" AND ".join(f"{escaped_col} IS NOT NULL AND {escaped_col} != ''" for escaped_col in escaped_columns)} {time_condition}
         GROUP BY {column_list}
         ORDER BY frequency DESC
         LIMIT {limit}

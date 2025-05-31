@@ -100,6 +100,8 @@ def main(
         if mode == "explorer":
             # Use advanced exploration server
             server = ExplorationServer(clickhouse_client)
+            # Pass abuse patterns to the exploration server
+            server.set_abuse_patterns(abuse_patterns)
             app = server.get_app()
 
             # Add enhanced anomaly detection
