@@ -2,6 +2,8 @@
 
 A Python tool that parses Apache log files, processes them with ClickHouse Local, and serves a web dashboard for visualizing web requests and detecting potential abuse patterns.
 
+![A2LogViz Screenshot](screenshot/a2logviz.png)
+
 ## Features
 
 - **Configurable Log Parsing**: Supports predefined formats, Apache LogFormat strings, and custom regex patterns
