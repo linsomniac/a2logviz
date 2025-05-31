@@ -1,7 +1,7 @@
 """Web server for Apache log visualization dashboard."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -40,6 +40,7 @@ class LogVisualizationServer:
     <title>Apache Log Visualizer</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
     <style>
         .chart-container { margin: 20px 0; }
         .metric-card {
@@ -54,6 +55,25 @@ class LogVisualizationServer:
 <body>
     <div class="container-fluid">
         <h1 class="mt-4 mb-4">Apache Log Analysis Dashboard</h1>
+
+        <div id="timeline-container" style="margin-bottom: 20px;">
+            <!-- Timeline will be rendered here -->
+            <p>Timeline Placeholder</p>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-5">
+                <label for="start_time" class="form-label">Start Time:</label>
+                <input type="datetime-local" id="start_time" name="start_time" class="form-control">
+            </div>
+            <div class="col-md-5">
+                <label for="end_time" class="form-label">End Time:</label>
+                <input type="datetime-local" id="end_time" name="end_time" class="form-control">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button id="filter-button" class="btn btn-primary w-100">Filter</button>
+            </div>
+        </div>
 
         <div class="row">
             <div class="col-md-6">
@@ -98,36 +118,114 @@ class LogVisualizationServer:
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-timeline-graph2d.min.js"></script>
     <script>
         // Load charts when page loads
         window.onload = function() {
-            loadCharts();
+            initializeTimeline(); // Initialize timeline first
+            loadCharts(); // Load initial charts
+
+            // Add event listener for the filter button
+            const filterButton = document.getElementById('filter-button');
+            if (filterButton) {
+                filterButton.addEventListener('click', function() {
+                    loadCharts(); // Reload charts with current time range
+                });
+            }
         };
 
+        function initializeTimeline() {
+            const container = document.getElementById('timeline-container');
+            if (!container) {
+                console.error('Timeline container not found');
+                return;
+            }
+            // Clear placeholder
+            container.innerHTML = '';
+
+
+            // Create a sample dataset (replace with actual data later)
+            const items = new vis.DataSet([
+                {id: 1, content: 'Event 1', start: new Date(new Date().getTime() - 60 * 60 * 1000)}, // 1 hour ago
+                {id: 2, content: 'Event 2', start: new Date()}, // now
+                {id: 3, content: 'Event 3', start: new Date(new Date().getTime() + 60 * 60 * 1000)}  // 1 hour from now
+            ]);
+
+            // Configuration for the Timeline
+            const options = {
+                selectable: true,
+                multiselect: false,
+                showCurrentTime: true,
+                zoomable: true,
+                // Ensure the range selection handles are visible
+                showMajorLabels: true,
+                showMinorLabels: true,
+                // Allow dragging the selected range
+                moveable: true,
+            };
+
+            // Create a Timeline
+            const timeline = new vis.Timeline(container, items, options);
+
+            // Add event listener for range selection
+            timeline.on('rangechanged', function (properties) {
+                const startTimeInput = document.getElementById('start_time');
+                const endTimeInput = document.getElementById('end_time');
+
+                if (startTimeInput && endTimeInput) {
+                    // Format to YYYY-MM-DDTHH:mm
+                    const startStr = properties.start.toISOString().slice(0,16);
+                    const endStr = properties.end.toISOString().slice(0,16);
+
+                    startTimeInput.value = startStr;
+                    endTimeInput.value = endStr;
+                    console.log('Selected range:', startStr, endStr);
+                }
+            });
+
+            // Set initial range for the timeline (e.g., last 24 hours)
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+            timeline.setWindow(start, end);
+        }
+
         async function loadCharts() {
+            const startTimeElem = document.getElementById('start_time');
+            const endTimeElem = document.getElementById('end_time');
+            let queryParams = '';
+
+            if (startTimeElem && endTimeElem && startTimeElem.value && endTimeElem.value) {
+                const startTime = startTimeElem.value;
+                const endTime = endTimeElem.value;
+                queryParams = `?start_time=${encodeURIComponent(startTime)}&end_time=${encodeURIComponent(endTime)}`;
+                console.log("Loading charts with time range:", queryParams);
+            } else {
+                console.log("Loading charts without time range.");
+            }
+
             try {
                 // Load top IPs chart
-                const topIpsResponse = await fetch('/api/top-ips');
+                const topIpsResponse = await fetch(`/api/top-ips${queryParams}`);
                 const topIpsData = await topIpsResponse.json();
                 renderTopIpsChart(topIpsData);
 
                 // Load status codes chart
-                const statusCodesResponse = await fetch('/api/status-codes');
+                const statusCodesResponse = await fetch(`/api/status-codes${queryParams}`);
                 const statusCodesData = await statusCodesResponse.json();
                 renderStatusCodesChart(statusCodesData);
 
                 // Load hourly requests chart
-                const hourlyResponse = await fetch('/api/hourly-requests');
+                const hourlyResponse = await fetch(`/api/hourly-requests${queryParams}`);
                 const hourlyData = await hourlyResponse.json();
                 renderHourlyRequestsChart(hourlyData);
 
                 // Load suspicious requests
-                const suspiciousResponse = await fetch('/api/suspicious-requests');
+                const suspiciousResponse = await fetch(`/api/suspicious-requests${queryParams}`);
                 const suspiciousData = await suspiciousResponse.json();
                 renderSuspiciousRequestsTable(suspiciousData);
 
                 // Load user agents
-                const userAgentsResponse = await fetch('/api/user-agents');
+                const userAgentsResponse = await fetch(`/api/user-agents${queryParams}`);
                 const userAgentsData = await userAgentsResponse.json();
                 renderUserAgentsTable(userAgentsData);
 
@@ -263,34 +361,34 @@ class LogVisualizationServer:
             )
 
         @self.app.get("/api/top-ips")
-        async def get_top_ips() -> list[dict[str, Any]]:
+        async def get_top_ips(start_time: Optional[str] = None, end_time: Optional[str] = None) -> list[dict[str, Any]]:
             """Get top IP addresses by request count."""
-            return self.clickhouse.get_top_ips()
+            return self.clickhouse.get_top_ips(start_time=start_time, end_time=end_time)
 
         @self.app.get("/api/status-codes")
-        async def get_status_codes() -> list[dict[str, Any]]:
+        async def get_status_codes(start_time: Optional[str] = None, end_time: Optional[str] = None) -> list[dict[str, Any]]:
             """Get HTTP status code distribution."""
-            return self.clickhouse.get_status_code_distribution()
+            return self.clickhouse.get_status_code_distribution(start_time=start_time, end_time=end_time)
 
         @self.app.get("/api/hourly-requests")
-        async def get_hourly_requests() -> list[dict[str, Any]]:
+        async def get_hourly_requests(start_time: Optional[str] = None, end_time: Optional[str] = None) -> list[dict[str, Any]]:
             """Get hourly request patterns."""
-            return self.clickhouse.get_hourly_requests()
+            return self.clickhouse.get_hourly_requests(start_time=start_time, end_time=end_time)
 
         @self.app.get("/api/suspicious-requests")
-        async def get_suspicious_requests() -> list[dict[str, Any]]:
+        async def get_suspicious_requests(start_time: Optional[str] = None, end_time: Optional[str] = None) -> list[dict[str, Any]]:
             """Get potentially suspicious request patterns."""
-            return self.clickhouse.get_suspicious_requests()
+            return self.clickhouse.get_suspicious_requests(start_time=start_time, end_time=end_time)
 
         @self.app.get("/api/user-agents")
-        async def get_user_agents() -> list[dict[str, Any]]:
+        async def get_user_agents(start_time: Optional[str] = None, end_time: Optional[str] = None) -> list[dict[str, Any]]:
             """Get user agent analysis."""
-            return self.clickhouse.get_user_agent_analysis()
+            return self.clickhouse.get_user_agent_analysis(start_time=start_time, end_time=end_time)
 
         @self.app.get("/api/test")
-        async def test_clickhouse() -> dict[str, Any]:
+        async def test_clickhouse(start_time: Optional[str] = None, end_time: Optional[str] = None) -> dict[str, Any]:
             """Test ClickHouse functionality."""
-            return self.clickhouse.test_query()
+            return self.clickhouse.test_query(start_time=start_time, end_time=end_time)
 
     def get_app(self) -> FastAPI:
         """Get the FastAPI application instance."""

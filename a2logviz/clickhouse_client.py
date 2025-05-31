@@ -1,5 +1,6 @@
 """ClickHouse Local client for log data processing."""
 
+from datetime import datetime
 import subprocess
 import tempfile
 from pathlib import Path
@@ -158,45 +159,74 @@ class ClickHouseLocalClient:
             print(f"Query was: {query}")
             return []
 
-    def get_top_ips(self, limit: int = 10) -> list[dict[str, Any]]:
+    def _build_time_filter_condition(self, start_time_str: Optional[str], end_time_str: Optional[str], existing_where_clause: bool = False) -> str:
+        """Helper to build the time filter condition string."""
+        if start_time_str and end_time_str:
+            try:
+                # Parse from 'YYYY-MM-DDTHH:mm'
+                start_dt = datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M')
+                end_dt = datetime.strptime(end_time_str, '%Y-%m-%dT%H:%M')
+
+                # Format to 'YYYY-MM-DD HH:MM:SS' for ClickHouse
+                ch_start_time = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+                ch_end_time = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                keyword = "AND" if existing_where_clause else "WHERE"
+                # Ensure leading space for proper concatenation
+                return f" {keyword} timestamp BETWEEN toDateTime('{ch_start_time}') AND toDateTime('{ch_end_time}')"
+            except ValueError:
+                # Handle invalid date format gracefully
+                print(f"Warning: Invalid date format for time filter. start='{start_time_str}', end='{end_time_str}'")
+                return ""
+        return ""
+
+    def get_top_ips(self, limit: int = 10, start_time: str = None, end_time: str = None) -> list[dict[str, Any]]:
         """Get top IP addresses by request count."""
+        time_filter = self._build_time_filter_condition(start_time, end_time)
         query = f"""
         SELECT
             remote_host as ip,
             count() as request_count
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
+        {time_filter}
         GROUP BY remote_host 
         ORDER BY request_count DESC 
         LIMIT {limit}
         """
         return self.execute_query(query)
 
-    def get_status_code_distribution(self) -> list[dict[str, Any]]:
+    def get_status_code_distribution(self, start_time: str = None, end_time: str = None) -> list[dict[str, Any]]:
         """Get distribution of HTTP status codes."""
+        time_filter = self._build_time_filter_condition(start_time, end_time)
         query = f"""
         SELECT
             status_code,
             count() as count
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
+        {time_filter}
         GROUP BY status_code 
         ORDER BY status_code
         """
         return self.execute_query(query)
 
-    def get_hourly_requests(self) -> list[dict[str, Any]]:
+    def get_hourly_requests(self, start_time: str = None, end_time: str = None) -> list[dict[str, Any]]:
         """Get request count by hour."""
+        time_filter = self._build_time_filter_condition(start_time, end_time)
+        # Note: toHour(timestamp) will group by hour within the filtered range.
         query = f"""
         SELECT
             toHour(timestamp) as hour,
             count() as request_count
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
+        {time_filter}
         GROUP BY hour 
         ORDER BY hour
         """
         return self.execute_query(query)
 
-    def get_suspicious_requests(self, min_requests: int = 100) -> list[dict[str, Any]]:
+    def get_suspicious_requests(self, min_requests: int = 100, start_time: str = None, end_time: str = None) -> list[dict[str, Any]]:
         """Identify potentially suspicious request patterns."""
+        time_filter = self._build_time_filter_condition(start_time, end_time)
         query = f"""
         SELECT
             remote_host as ip,
@@ -205,29 +235,32 @@ class ClickHouseLocalClient:
             countIf(status_code = 404) as not_found_count,
             uniq(path) as unique_paths
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
+        {time_filter}
         GROUP BY remote_host 
         HAVING request_count >= {min_requests} 
         ORDER BY request_count DESC
         """
         return self.execute_query(query)
 
-    def get_user_agent_analysis(self) -> list[dict[str, Any]]:
+    def get_user_agent_analysis(self, start_time: str = None, end_time: str = None) -> list[dict[str, Any]]:
         """Analyze user agent patterns for bot detection."""
+        time_filter = self._build_time_filter_condition(start_time, end_time, existing_where_clause=True)
         query = f"""
         SELECT
             user_agent,
             count() as request_count,
             uniq(remote_host) as unique_ips
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
-        WHERE user_agent IS NOT NULL AND user_agent != ''
+        WHERE user_agent IS NOT NULL AND user_agent != ''{time_filter}
         GROUP BY user_agent 
         ORDER BY request_count DESC 
         LIMIT 20
         """
         return self.execute_query(query)
 
-    def test_query(self) -> dict[str, Any]:
+    def test_query(self, start_time: str = None, end_time: str = None) -> dict[str, Any]:
         """Test basic query functionality."""
+        time_filter = self._build_time_filter_condition(start_time, end_time)
         query = f"""
         SELECT 
             count() as total_rows,
@@ -235,6 +268,7 @@ class ClickHouseLocalClient:
             min(timestamp) as earliest_request,
             max(timestamp) as latest_request
         FROM file('{self.data_file}', CSV, '{self.csv_schema}')
+        {time_filter}
         """
         result = self.execute_query(query)
         return result[0] if result else {}
