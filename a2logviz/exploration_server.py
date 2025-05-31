@@ -895,17 +895,34 @@ class ExplorationServer:
             end_time: Optional[str] = Query(None),
         ) -> Dict[str, Any]:
             """Run anomaly detection on the dataset."""
-            from .anomaly_detector import AnomalyDetector
+            from .anomaly_detector import AdvancedAnomalyDetector
             
             try:
-                detector = AnomalyDetector(self.clickhouse)
+                detector = AdvancedAnomalyDetector(self.clickhouse)
                 
                 time_filter = None
                 if start_time and end_time:
                     time_filter = {"start": start_time, "end": end_time}
                 
-                alerts = detector.detect_anomalies(time_filter)
-                return {"alerts": alerts}
+                alerts = detector.detect_all_anomalies(time_filter)
+                # Convert alerts to dict format for JSON serialization
+                alerts_data = []
+                for alert in alerts:
+                    alerts_data.append({
+                        "alert_type": alert.alert_type,
+                        "severity": alert.severity,
+                        "column": alert.column,
+                        "description": alert.description,
+                        "value": alert.value,
+                        "frequency": alert.frequency,
+                        "percentage": alert.percentage,
+                        "baseline": alert.baseline,
+                        "deviation": alert.deviation,
+                        "time_window": alert.time_window,
+                        "recommendations": alert.recommendations or []
+                    })
+                
+                return {"alerts": alerts_data}
                 
             except Exception as e:
                 return {"error": str(e), "alerts": []}
