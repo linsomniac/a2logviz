@@ -56,7 +56,7 @@ class LogVisualizationServer:
     <div class="container-fluid">
         <h1 class="mt-4 mb-4">Apache Log Analysis Dashboard</h1>
 
-        <div id="timeline-container" style="margin-bottom: 20px; min-height: 150px;">
+        <div id="timeline-container" style="margin-bottom: 20px; min-height: 150px; border: 3px solid red; padding: 5px;">
             <!-- Timeline will be rendered here -->
             <p>Timeline Placeholder</p>
         </div>
@@ -135,7 +135,9 @@ class LogVisualizationServer:
         };
 
         function initializeTimeline() {
+            console.log('Attempting to initialize timeline...');
             const container = document.getElementById('timeline-container');
+            console.log('Timeline container element:', container);
             if (!container) {
                 console.error('Timeline container not found');
                 return;
@@ -143,13 +145,13 @@ class LogVisualizationServer:
             // Clear placeholder
             container.innerHTML = '';
 
-
             // Create a sample dataset (replace with actual data later)
             const items = new vis.DataSet([
                 {id: 1, content: 'Event 1', start: new Date(new Date().getTime() - 60 * 60 * 1000)}, // 1 hour ago
                 {id: 2, content: 'Event 2', start: new Date()}, // now
                 {id: 3, content: 'Event 3', start: new Date(new Date().getTime() + 60 * 60 * 1000)}  // 1 hour from now
             ]);
+            console.log('Vis DataSet created:', items);
 
             // Configuration for the Timeline
             const options = {
@@ -163,30 +165,41 @@ class LogVisualizationServer:
                 // Allow dragging the selected range
                 moveable: true,
             };
+            console.log('Vis options set:', options);
 
-            // Create a Timeline
-            const timeline = new vis.Timeline(container, items, options);
+            try {
+                console.log('Attempting to create vis.Timeline object...');
+                const timeline = new vis.Timeline(container, items, options);
+                console.log('vis.Timeline object created:', timeline);
 
-            // Add event listener for range selection
-            timeline.on('rangechanged', function (properties) {
-                const startTimeInput = document.getElementById('start_time');
-                const endTimeInput = document.getElementById('end_time');
+                timeline.on('rangechanged', function (properties) {
+                    const startTimeInput = document.getElementById('start_time');
+                    const endTimeInput = document.getElementById('end_time');
 
-                if (startTimeInput && endTimeInput) {
-                    // Format to YYYY-MM-DDTHH:mm
-                    const startStr = properties.start.toISOString().slice(0,16);
-                    const endStr = properties.end.toISOString().slice(0,16);
+                    if (startTimeInput && endTimeInput) {
+                        // Format to YYYY-MM-DDTHH:mm
+                        const startStr = properties.start.toISOString().slice(0,16);
+                        const endStr = properties.end.toISOString().slice(0,16);
 
-                    startTimeInput.value = startStr;
-                    endTimeInput.value = endStr;
-                    console.log('Selected range:', startStr, endStr);
+                        startTimeInput.value = startStr;
+                        endTimeInput.value = endStr;
+                        console.log('Selected range:', startStr, endStr); // Existing log
+                    }
+                    console.log('Timeline rangechanged event:', properties); // New log for the event
+                });
+                console.log('rangechanged event listener attached.');
+
+                const end = new Date();
+                const start = new Date(end.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+                timeline.setWindow(start, end);
+                console.log('Initial timeline window set.');
+
+            } catch (error) {
+                console.error('ERROR INITIALIZING VIS.JS TIMELINE:', error);
+                if (container) {
+                    container.innerHTML = '<p style="color: red; font-weight: bold;">Error initializing timeline. Check console.</p>';
                 }
-            });
-
-            // Set initial range for the timeline (e.g., last 24 hours)
-            const end = new Date();
-            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
-            timeline.setWindow(start, end);
+            }
         }
 
         async function loadCharts() {
